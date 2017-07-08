@@ -4,6 +4,23 @@
         xmlns:wpf="clr-namespace:WinView.WPF;assembly=WinView.WPF"
         Title="MainWindow">
     <Grid>
-        <wpf:WinViewControl />
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200" />
+            <ColumnDefinition Width="5" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <ListView Grid.Column="0" 
+                  ItemsSource="{Binding WindowNames}" 
+                  SelectedItem="{Binding SelectedWindowName}"
+                  />
+
+        <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Center" />
+        
+        <wpf:WinViewControl 
+            Grid.Column="2"
+            UpdateRate="60"
+            WindowHandle="{Binding CaptureWindow}"
+            />
     </Grid>
 </Window>

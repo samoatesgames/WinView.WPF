@@ -12,22 +12,102 @@ namespace WinView.WPF
     /// </summary>
     public partial class WinViewControl
     {
+        #region Private Members
+
         /// <summary>
-        /// The maximum update rate in milliseconds.
-        /// Default is 60fps.
-        /// TODO: Make this a dependency property.
+        /// 
         /// </summary>
-        private const int c_updateRate = 1000 / 60;
+        private int m_updateRate;
+
+        /// <summary>
+        /// 
+        /// </summary>
+        private IntPtr m_captureWindowHandle;
 
         /// <summary>
         /// The task used to call the real-time window capturing.
         /// </summary>
-        private readonly Task m_captureTask;
+        private Task m_captureTask;
 
         /// <summary>
         /// The cancellation token for the capture task.
         /// </summary>
-        private readonly CancellationTokenSource m_cancellationTokenSource;
+        private CancellationTokenSource m_cancellationTokenSource;
+
+        #endregion
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public bool IsCapturing { get; private set; }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public static readonly DependencyProperty UpdateRateProperty =
+            DependencyProperty.Register("UpdateRate", typeof(int), typeof(WinViewControl), 
+                new FrameworkPropertyMetadata(1000 / 60, OnUpdateRatePropertyChanged));
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="source"></param>
+        /// <param name="e"></param>
+        private static void OnUpdateRatePropertyChanged(DependencyObject source, DependencyPropertyChangedEventArgs e)
+        {
+            var control = source as WinViewControl;
+            if (control != null)
+            {
+                control.m_updateRate = control.UpdateRate;
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public int UpdateRate
+        {
+            get { return 1000 / (int)GetValue(UpdateRateProperty); }
+            set { SetValue(UpdateRateProperty, 1000 / value); }
+        }
+
+        public static readonly DependencyProperty WindowHandleProperty =
+            DependencyProperty.Register("WindowHandle", typeof(IntPtr), typeof(WinViewControl),
+                new FrameworkPropertyMetadata(User32.GetDesktopWindow(), OnWindowHandlePropertyChanged));
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="source"></param>
+        /// <param name="e"></param>
+        private static void OnWindowHandlePropertyChanged(DependencyObject source, DependencyPropertyChangedEventArgs e)
+        {
+            var control = source as WinViewControl;
+            if (control != null)
+            {
+                control.m_captureWindowHandle = control.WindowHandle == IntPtr.Zero
+                    ? User32.GetDesktopWindow()
+                    : control.WindowHandle;
+
+                if (control.IsCapturing)
+                {
+                    // Restart the capture task
+                    control.m_cancellationTokenSource.Cancel();
+                    control.m_cancellationTokenSource = new CancellationTokenSource();
+                    control.m_captureTask = new Task(control.CaptureWindow);
+                    control.m_captureTask.Start();
+                }
+            }
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public IntPtr WindowHandle
+        {
+            get { return (IntPtr)GetValue(WindowHandleProperty); }
+            set { SetValue(WindowHandleProperty, value); }
+        }
 
         /// <summary>
         /// Default constructor
@@ -37,9 +117,10 @@ namespace WinView.WPF
             InitializeComponent();
 
             m_cancellationTokenSource = new CancellationTokenSource();
-            m_captureTask = new Task(CaptureWindow, m_cancellationTokenSource.Token);
+            m_captureTask = new Task(CaptureWindow);
+            m_captureTask.Start();
+            IsCapturing = true;
 
-            Loaded += OnLoaded;
             Unloaded += OnUnloaded;
         }
 
@@ -50,17 +131,11 @@ namespace WinView.WPF
         /// <param name="routedEventArgs"></param>
         private void OnUnloaded(object sender, RoutedEventArgs routedEventArgs)
         {
-            m_cancellationTokenSource.Cancel();
-        }
-
-        /// <summary>
-        /// Called when the control is loaded
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="routedEventArgs"></param>
-        private void OnLoaded(object sender, RoutedEventArgs routedEventArgs)
-        {
-            m_captureTask.Start();
+            if (IsCapturing)
+            {
+                m_cancellationTokenSource.Cancel();
+                IsCapturing = false;
+            }
         }
 
         /// <summary>
@@ -73,7 +148,7 @@ namespace WinView.WPF
             var dispatcher = Application.Current.Dispatcher;
             var bitmapSizeOptions = BitmapSizeOptions.FromEmptyOptions();
 
-            var captureHandle = User32.GetDesktopWindow();  // TODO: This should be a dependency property
+            var captureHandle = m_captureWindowHandle;
             using (var captureWindow = new WindowCapture(captureHandle))
             {
                 while (!token.IsCancellationRequested)
@@ -96,7 +171,7 @@ namespace WinView.WPF
                     // Offset wait time with the amount of time it took to capture.
                     // This means we are limited to the update rate, but if capturing
                     // takes longer than a 'single frame' we don't stall.
-                    var wait = c_updateRate - captureTime.Milliseconds;
+                    var wait = m_updateRate - captureTime.Milliseconds;
                     while ((--wait) >= 0)
                     {
                         Thread.Sleep(1);

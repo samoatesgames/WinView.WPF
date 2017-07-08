@@ -7,7 +7,7 @@ namespace WinView.WPF
     {
         [DllImport("gdi32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool BitBlt(IntPtr hDestDc, int x, int y, int nWidth, int nHeight, IntPtr hSrcDC, int xSrc, int ySrc, Int32 dwRop);
+        public static extern bool BitBlt(IntPtr hDestDc, int x, int y, int nWidth, int nHeight, IntPtr hSrcDc, int xSrc, int ySrc, Int32 dwRop);
         
         [DllImport("gdi32.dll")]
         public static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
