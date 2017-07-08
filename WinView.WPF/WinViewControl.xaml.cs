@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -11,73 +12,106 @@ namespace WinView.WPF
     /// </summary>
     public partial class WinViewControl
     {
-        private bool m_capturing = false;
+        /// <summary>
+        /// The maximum update rate in milliseconds.
+        /// Default is 60fps.
+        /// TODO: Make this a dependency property.
+        /// </summary>
+        private const int c_updateRate = 1000 / 60;
 
         /// <summary>
-        /// 
+        /// The task used to call the real-time window capturing.
+        /// </summary>
+        private readonly Task m_captureTask;
+
+        /// <summary>
+        /// The cancellation token for the capture task.
+        /// </summary>
+        private readonly CancellationTokenSource m_cancellationTokenSource;
+
+        /// <summary>
+        /// Default constructor
         /// </summary>
         public WinViewControl()
         {
             InitializeComponent();
+
+            m_cancellationTokenSource = new CancellationTokenSource();
+            m_captureTask = new Task(CaptureWindow, m_cancellationTokenSource.Token);
+
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
         }
 
         /// <summary>
-        /// 
+        /// Called when the control is unloaded.
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="routedEventArgs"></param>
         private void OnUnloaded(object sender, RoutedEventArgs routedEventArgs)
         {
-            m_capturing = false;
+            m_cancellationTokenSource.Cancel();
         }
 
         /// <summary>
-        /// 
+        /// Called when the control is loaded
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="routedEventArgs"></param>
         private void OnLoaded(object sender, RoutedEventArgs routedEventArgs)
         {
-            const int updateRate = 1000 / 60;
+            m_captureTask.Start();
+        }
 
+        /// <summary>
+        /// Called by the capture task.
+        /// This is where the window is captured and copied to the render image.
+        /// </summary>
+        private void CaptureWindow()
+        {
+            var token = m_cancellationTokenSource.Token;
             var dispatcher = Application.Current.Dispatcher;
             var bitmapSizeOptions = BitmapSizeOptions.FromEmptyOptions();
 
-            ThreadPool.QueueUserWorkItem(x =>
+            var captureHandle = User32.GetDesktopWindow();  // TODO: This should be a dependency property
+            using (var captureWindow = new WindowCapture(captureHandle))
             {
-                m_capturing = true;
-                using (var captureWindow = new WindowCapture(User32.GetDesktopWindow()))
+                while (!token.IsCancellationRequested)
                 {
-                    while (m_capturing)
-                    {
-                        captureWindow.CaptureWindow(
-                            dc =>
+                    var startTime = DateTime.Now;
+                    captureWindow.CaptureWindow(
+                        dc =>
+                        {
+                            // Jump back to the application dispatcher to set the actual image source
+                            dispatcher.Invoke(() =>
                             {
-                                dispatcher.Invoke(() =>
-                                {
-                                    Source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
+                                RenderImage.Source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
                                         dc, IntPtr.Zero, Int32Rect.Empty, bitmapSizeOptions
-                                        );
-                                }, DispatcherPriority.Render);
-                            }
-                        );
+                                    );
+                            }, DispatcherPriority.Render, token);
+                        }
+                    );
+                    var captureTime = DateTime.Now - startTime;
 
-                        //var wait = updateRate;
-                        //while ((--wait) >= 0)
-                        //{
-                        //    Thread.Sleep(1);
-                        //    if (!m_capturing)
-                        //    {
-                        //        return;
-                        //    }
-                        //}
+                    // Offset wait time with the amount of time it took to capture.
+                    // This means we are limited to the update rate, but if capturing
+                    // takes longer than a 'single frame' we don't stall.
+                    var wait = c_updateRate - captureTime.Milliseconds;
+                    while ((--wait) >= 0)
+                    {
+                        Thread.Sleep(1);
+                        if (token.IsCancellationRequested)
+                        {
+                            return;
+                        }
                     }
                 }
-            });
+            }
         }
 
+        /// <summary>
+        /// Wrapper around GDI window capturing.
+        /// </summary>
         internal class WindowCapture : IDisposable
         {
             private readonly Win32Rect m_windowRect;
@@ -86,7 +120,7 @@ namespace WinView.WPF
             private readonly IntPtr m_compatibleBitmapHandle;
 
             /// <summary>
-            /// 
+            /// Initialize all Gdi resources.
             /// </summary>
             /// <param name="windowHandle"></param>
             public WindowCapture(IntPtr windowHandle)
@@ -99,7 +133,7 @@ namespace WinView.WPF
             }
 
             /// <summary>
-            /// 
+            /// Destory all Gdi resources.
             /// </summary>
             public void Dispose()
             {
@@ -109,14 +143,20 @@ namespace WinView.WPF
             }
 
             /// <summary>
-            /// 
+            /// Copy the target windows contents to a bitmap handle.
+            /// Then call the callback with the address of the handle.
             /// </summary>
             /// <param name="callback"></param>
             public void CaptureWindow(Action<IntPtr> callback)
             {
                 try
                 {
-                    if (Gdi32.BitBlt(m_targetDc, 0, 0, m_windowRect.Width, m_windowRect.Height, m_sourceDc, 0, 0,
+                    if (Gdi32.BitBlt(
+                        m_targetDc,
+                        0, 0,
+                        m_windowRect.Width, m_windowRect.Height,
+                        m_sourceDc,
+                        0, 0,
                         Gdi32.Srccopy))
                     {
                         callback(m_compatibleBitmapHandle);
