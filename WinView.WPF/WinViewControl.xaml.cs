@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Drawing;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -93,10 +94,12 @@ namespace WinView.WPF
                 {
                     // Restart the capture task
                     control.m_cancellationTokenSource.Cancel();
-                    control.m_cancellationTokenSource = new CancellationTokenSource();
-                    control.m_captureTask = new Task(control.CaptureWindow);
-                    control.m_captureTask.Start();
                 }
+
+                control.m_cancellationTokenSource = new CancellationTokenSource();
+                control.m_captureTask = new Task(control.CaptureWindow);
+                control.IsCapturing = true;
+                control.m_captureTask.Start();
             }
         }
 
@@ -115,12 +118,6 @@ namespace WinView.WPF
         public WinViewControl()
         {
             InitializeComponent();
-
-            m_cancellationTokenSource = new CancellationTokenSource();
-            m_captureTask = new Task(CaptureWindow);
-            m_captureTask.Start();
-            IsCapturing = true;
-
             Unloaded += OnUnloaded;
         }
 
@@ -149,20 +146,20 @@ namespace WinView.WPF
             var bitmapSizeOptions = BitmapSizeOptions.FromEmptyOptions();
 
             var captureHandle = m_captureWindowHandle;
-            using (var captureWindow = new WindowCapture(captureHandle))
+            using (var captureWindow = new GdiWindowCapture(captureHandle))
             {
                 while (!token.IsCancellationRequested)
                 {
                     var startTime = DateTime.Now;
                     captureWindow.CaptureWindow(
-                        dc =>
+                        data =>
                         {
                             // Jump back to the application dispatcher to set the actual image source
                             dispatcher.Invoke(() =>
                             {
                                 RenderImage.Source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
-                                        dc, IntPtr.Zero, Int32Rect.Empty, bitmapSizeOptions
-                                    );
+                                    data, IntPtr.Zero, Int32Rect.Empty, bitmapSizeOptions
+                                );
                             }, DispatcherPriority.Render, token);
                         }
                     );
@@ -184,37 +181,37 @@ namespace WinView.WPF
             }
         }
 
+        internal interface IWindowCapture
+        {
+            void CaptureWindow(Action<IntPtr> callback);
+        }
+
         /// <summary>
         /// Wrapper around GDI window capturing.
         /// </summary>
-        internal class WindowCapture : IDisposable
+        internal class GdiWindowCapture : IWindowCapture, IDisposable
         {
             private readonly Win32Rect m_windowRect;
             private readonly IntPtr m_sourceDc;
-            private readonly IntPtr m_targetDc;
-            private readonly IntPtr m_compatibleBitmapHandle;
+            private readonly Bitmap m_bitmap;
 
             /// <summary>
             /// Initialize all Gdi resources.
             /// </summary>
             /// <param name="windowHandle"></param>
-            public WindowCapture(IntPtr windowHandle)
+            public GdiWindowCapture(IntPtr windowHandle)
             {
                 User32.GetWindowRect(windowHandle, out m_windowRect);
                 m_sourceDc = User32.GetDC(windowHandle);
-                m_targetDc = Gdi32.CreateCompatibleDC(m_sourceDc);
-                m_compatibleBitmapHandle = Gdi32.CreateCompatibleBitmap(m_sourceDc, m_windowRect.Width, m_windowRect.Height);
-                Gdi32.SelectObject(m_targetDc, m_compatibleBitmapHandle);
+                m_bitmap = new Bitmap(m_windowRect.Width, m_windowRect.Height);
             }
 
             /// <summary>
-            /// Destory all Gdi resources.
+            /// Destroy all Gdi resources.
             /// </summary>
             public void Dispose()
             {
-                Gdi32.DeleteObject(m_compatibleBitmapHandle);
                 User32.ReleaseDC(IntPtr.Zero, m_sourceDc);
-                User32.ReleaseDC(IntPtr.Zero, m_targetDc);
             }
 
             /// <summary>
@@ -226,15 +223,23 @@ namespace WinView.WPF
             {
                 try
                 {
-                    if (Gdi32.BitBlt(
-                        m_targetDc,
-                        0, 0,
-                        m_windowRect.Width, m_windowRect.Height,
-                        m_sourceDc,
-                        0, 0,
-                        Gdi32.Srccopy))
+                    bool valid;
+                    using (var target = Graphics.FromImage(m_bitmap))
                     {
-                        callback(m_compatibleBitmapHandle);
+                        valid = Gdi32.BitBlt(
+                            target.GetHdc(),
+                            0, 0,
+                            m_windowRect.Width, m_windowRect.Height,
+                            m_sourceDc,
+                            0, 0,
+                            Gdi32.Srccopy);
+                    }
+
+                    if (valid)
+                    {
+                        var bitmapDc = m_bitmap.GetHbitmap();
+                        callback(bitmapDc);
+                        Gdi32.DeleteObject(bitmapDc);
                     }
                 }
                 catch(Exception)
