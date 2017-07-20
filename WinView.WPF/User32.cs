@@ -108,9 +108,21 @@ namespace WinView.WPF
 
         // ReSharper restore InconsistentNaming
     }
+    
+    public class StyleFlags
+    {
+        public static int GWL_STYLE = -16;
+        public static int GWL_EXSTYLE = -20;
+        public static int WS_EX_TOOLWINDOW = 0x00000080;
+    }
 
+    public class SystemMetric
+    {
+        public static int SM_CXVIRTUALSCREEN = 78;
+        public static int SM_CYVIRTUALSCREEN = 79;
+    }
 
-    internal class User32
+    public class User32
     {
         [DllImport("user32.dll")]
         public static extern IntPtr GetDesktopWindow();
@@ -141,5 +153,20 @@ namespace WinView.WPF
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, SetWindowPosFlags uFlags);
+
+        [DllImport("user32")]
+        public static extern IntPtr SetParent(IntPtr hWnd, IntPtr hWndParent);
+
+        [DllImport("user32.dll")]
+        public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll")]
+        public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll")]
+        public static extern bool AdjustWindowRectEx(ref Win32Rect rect, int dwStyle, bool menu, int dwExStyle);
+
+        [DllImport("user32.dll")]
+        public static extern int GetSystemMetrics(int nIndex);
     }
 }
